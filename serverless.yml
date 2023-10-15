@@ -1,0 +1,100 @@
+service: sls-python-thumbnail-generator
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.9
+  region: us-east-1
+  profile: serverless-admin
+  stage: dev
+  timeout: 10
+  memorySize: 128
+  environment:
+    THUMBNAIL_SIZE: 128
+    REGION_NAME: ${self:provider.region}
+    DYNAMODB_TABLE: ${self:custom.dynamoTable}
+
+  iam:
+    role:
+      statements:
+        - Effect: 'Allow'
+          Resource: '*'
+          Action: 's3:*'
+        - Effect: 'Allow'
+          Action:
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+          Resource: 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}'
+
+custom:
+  bucket: generated-s3-thumbnails
+  dynamoTable: img-url-table
+  pilLayer: arn:aws:lambda:us-east-1:770693421928:layer:Klayers-p39-pillow:1
+  pythonRequirements:
+    dockerizePip: true
+
+functions:
+  s3_thumbnail_generator:
+    handler: handler.s3_thumbnail_generator
+    events:
+      - s3:
+          bucket: ${self:custom.bucket}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .png
+    layers:
+      - ${self:custom.pilLayer}
+
+  list:
+    handler: handler.s3_get_thumbnail_urls
+    events:
+      - http:
+          path: images/all
+          method: get
+          cors: true
+    layers:
+      - ${self:custom.pilLayer}
+
+  get:
+    handler: handler.s3_get_item
+    events:
+      - http:
+          path: images/get/{id}
+          method: get
+          cors: true
+    layers:
+      - ${self:custom.pilLayer}
+
+  delete:
+    handler: handler.s3_delete_item
+    events:
+      - http:
+          path: images/delete/{id}
+          method: delete
+          cors: true
+    layers:
+      - ${self:custom.pilLayer}
+
+resources:
+  Resources:
+    ImagesDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+plugins:
+  - serverless-python-requirements
